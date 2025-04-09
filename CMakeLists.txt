@@ -48,7 +48,7 @@ SET(CMAKE_INSTALL_PREFIX "/usr/")
 if(NOT HAVE_STRLCAT OR NOT HAVE_STRLCPY)
    target_link_libraries (vmm-boot-lcm glib-2.0)
 endif()
-target_link_libraries (vmm-boot-lcm vmm_client)
+target_link_libraries (vmm-boot-lcm vmm_client vmm_utils)
 target_link_libraries (vmm-boot-lcm abctl)
 
 install(TARGETS vmm-boot-lcm DESTINATION bin)
