@@ -18,6 +18,7 @@
     be set to enter the android recovery mode after the continuous boot fails.
 
 ==========================================================================*/
+#define _GNU_SOURCE
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,14 +36,14 @@
 #include "vmm_events.h"
 #include "vmm_log.h"
 #include "vmm_clib.h"
+#include "vm_config.h"
+
+#define GVM_MISC_PARTITION_PATH_PREFIX              "/dev/disk/by-partlabel/"
 
 #define SYMMETRIC_SLOT_SWITCH       1
 #define ASYMMETRIC_SLOT_SWITCH      2
 
-#define MAX_RETRY_CNT               7
-
 typedef struct vmm_boot_lcm vmm_boot_lcm_t;
-
 
 typedef enum lcm_request {
     STOP_GUEST = 0,
@@ -50,8 +51,11 @@ typedef enum lcm_request {
 } lcm_request_t;
 
 typedef struct gvm_context {
-    const char* vm_name;
+    char vm_name[16];
     uint32_t vmid;
+    int vmm_boot_lcm_enable;
+    int lcm_retry_count;
+    int slot_switch_config;
     pthread_mutex_t loop_mutex;
     pthread_cond_t wait_on_event;
     int32_t lcm_event;
@@ -66,7 +70,6 @@ typedef struct gvm_context {
 
 typedef struct vmm_boot_lcm {
     char host_boot_slot;
-    uint32_t slot_switch_config;
     void *vmm_handle;
     uint32_t num_gvms;
     gvm_context_t *gvm_ctxs;
@@ -419,7 +422,7 @@ static int do_failure_recovery(gvm_context_t *gvm_ctx)
 static int control_vm(vmm_boot_lcm_t *vmm_boot_lcm, gvm_context_t *gvm_ctx, lcm_request_t request)
 {
     struct boot_slot_info slot_info;
-    int count = 4;
+    int count = 2;
     int ret = -1;
 
     switch (request) {
@@ -432,21 +435,21 @@ static int control_vm(vmm_boot_lcm_t *vmm_boot_lcm, gvm_context_t *gvm_ctx, lcm_
         switch (slot_info.bootable_status) {
         case 'y':
             //set_bootable_status(gvm_ctx->misc_partition_path, 'n');
-            gvm_ctx->retry_cnt = MAX_RETRY_CNT;
+            gvm_ctx->retry_cnt = gvm_ctx->lcm_retry_count;
             gvm_ctx->recovery_set = false;
             break;
         default:
             if(gvm_ctx->retry_cnt > 0)
                 --gvm_ctx->retry_cnt;
+
+            if (gvm_ctx->retry_cnt == 0 && gvm_ctx->recovery_set == false) {
+                (void)do_failure_recovery(gvm_ctx);
+                gvm_ctx->recovery_set = true;
+            }
             break;
         }
 
-        vmm_info("vm boot retry count %d", gvm_ctx->retry_cnt);
-
-        if (gvm_ctx->retry_cnt == 0 && gvm_ctx->recovery_set == false) {
-            (void)do_failure_recovery(gvm_ctx);
-            gvm_ctx->recovery_set = true;
-        }
+        vmm_dbg("vm boot retry count %d", gvm_ctx->retry_cnt);
 
         do {
             ret = vmm_request_contrl_vm(gvm_ctx->vmid, VM_CONTROL_START, vmm_boot_lcm->vmm_handle);
@@ -465,35 +468,85 @@ static int control_vm(vmm_boot_lcm_t *vmm_boot_lcm, gvm_context_t *gvm_ctx, lcm_
 static int parse_gvm_info_and_populate_ctx(vmm_boot_lcm_t *vmm_boot_lcm)
 {
     int ret = -1;
+    uint32_t vmid;
+    const char *vm_str;
     gvm_context_t *gvm_ctx;
 
-    //Todo get vm info from vm config file
-    vmm_boot_lcm->num_gvms = 1;
+    ret = vm_config_init();
+    if (ret != EOK) {
+        vmm_err("Failed vm_config_init %d", ret);
+        goto exit;
+    }
 
-    gvm_ctx = (gvm_context_t*)calloc(1, sizeof(gvm_context_t) * vmm_boot_lcm->num_gvms);
-    if (gvm_ctx == NULL) {
+    vmm_boot_lcm->num_gvms = vm_config_get_num_vm();
+
+    vmm_boot_lcm->gvm_ctxs = (gvm_context_t*)calloc(1, sizeof(gvm_context_t) * vmm_boot_lcm->num_gvms);
+    if (vmm_boot_lcm->gvm_ctxs == NULL) {
         vmm_err("Failed to acllocate memory for gvm_info");
         ret = -ENOMEM;
         goto exit;
     }
-    vmm_boot_lcm->gvm_ctxs = gvm_ctx;
-    gvm_ctx->vmm_boot_lcm = vmm_boot_lcm;
 
-    //Todo get from vm config file
-    gvm_ctx->retry_cnt = MAX_RETRY_CNT;
-    gvm_ctx->vmid = 52;
-    (void)strlcpy(gvm_ctx->misc_partition_path, "/dev/disk/by-partlabel/la_misc", sizeof("/dev/disk/by-partlabel/la_misc"));
+    for (int i=0; i < vmm_boot_lcm->num_gvms; i++) {
+        gvm_ctx = &vmm_boot_lcm->gvm_ctxs[i];
 
-    ret = pthread_mutex_init(&gvm_ctx->loop_mutex, NULL);
-    if (ret != EOK) {
-        vmm_err("Failed to initialize loop_mutex \n");
-        goto exit;
-    }
+        gvm_ctx->vmm_boot_lcm = vmm_boot_lcm;
 
-    ret = pthread_cond_init(&gvm_ctx->wait_on_event, NULL);
-    if (ret != EOK) {
-        vmm_err("Failed to initialize wait_on_event\n");
-        goto exit;
+        ret = vm_config_get_vmid(i, &vmid);
+        if (ret != EOK) {
+            vmm_err("Failed get vmid for vm idx %d with %d", i, ret);
+            goto exit;
+        }
+        gvm_ctx->vmid = vmid;
+
+        ret = vm_config_get_vmm_boot_lcm_enable(vmid);
+        if (ret < 0) {
+            vmm_err("Failed get vmm_boot_lcm_enable for vmid %d with %d", vmid, ret);
+            goto exit;
+        }
+        gvm_ctx->vmm_boot_lcm_enable = !!ret;
+
+        ret = vm_config_get_lcm_retry_count(vmid);
+        if (ret < 0) {
+            vmm_err("Failed get lcm_retry_count for vmid %d with %d", vmid, ret);
+            goto exit;
+        }
+        gvm_ctx->lcm_retry_count = ret;
+
+        ret = vm_config_get_slot_switch_config(vmid);
+        if (ret < 0) {
+            vmm_err("Failed get slot_switch_config for vmid %d with %d", vmid, ret);
+            goto exit;
+        }
+        gvm_ctx->slot_switch_config = ret;
+
+        vm_str = vm_config_get_misc_partition(vmid);
+        if (vm_str == NULL) {
+            vmm_err("Failed get misc_partition for vmid %u", vmid);
+            goto exit;
+        }
+        (void)snprintf(gvm_ctx->misc_partition_path, sizeof(gvm_ctx->misc_partition_path), "%s%s", GVM_MISC_PARTITION_PATH_PREFIX, vm_str);
+
+        vm_str = vm_config_get_vm_name(vmid);
+        if (vm_str == NULL) {
+            vmm_err("Failed get vm name for vmid %u", vmid);
+            goto exit;
+        }
+        (void)strlcpy(gvm_ctx->vm_name, vm_str, sizeof(gvm_ctx->vm_name));
+
+        gvm_ctx->retry_cnt = gvm_ctx->lcm_retry_count;
+
+        ret = pthread_mutex_init(&gvm_ctx->loop_mutex, NULL);
+        if (ret != EOK) {
+            vmm_err("Failed to initialize loop_mutex \n");
+            goto exit;
+        }
+
+        ret = pthread_cond_init(&gvm_ctx->wait_on_event, NULL);
+        if (ret != EOK) {
+            vmm_err("Failed to initialize wait_on_event\n");
+            goto exit;
+        }
     }
 
     ret = EOK;
@@ -509,6 +562,9 @@ void* vmm_lcm_event_loop(void *ctx)
     int ret = -1;
 
     vmm_boot_lcm_t *vmm_boot_lcm = gvm_ctx->vmm_boot_lcm;
+    ret = pthread_setname_np(pthread_self(), "event_loop");
+    if (ret != EOK)
+        vmm_err("Failed to set name vmm_lcm_event_loop thread");
 
     ret = control_vm(vmm_boot_lcm, gvm_ctx, START_GUEST);
     if (ret != EOK) {
@@ -517,14 +573,14 @@ void* vmm_lcm_event_loop(void *ctx)
     }
 
     while (true) {
-        vmm_info("Wait for vmm lifecycle event");
+        vmm_dbg("Wait for vmm lifecycle event");
         pthread_mutex_lock(&gvm_ctx->loop_mutex);
         while (gvm_ctx->event_update == false)
             pthread_cond_wait(&gvm_ctx->wait_on_event, &gvm_ctx->loop_mutex);
         lcm_event = gvm_ctx->lcm_event;
         gvm_ctx->event_update = false;
         pthread_mutex_unlock(&gvm_ctx->loop_mutex);
-        vmm_info("vmm lifecycle event recieved");
+        vmm_dbg("vmm lifecycle event recieved");
 
         switch (lcm_event) {
         case GVM_EVENT_DOWN:
@@ -565,6 +621,7 @@ static int vmm_lcm_event_loop_thread_create(vmm_boot_lcm_t *vmm_boot_lcm)
 
     for (int i = 0; i < vmm_boot_lcm->num_gvms; i++) {
         gvm_ctx = &vmm_boot_lcm->gvm_ctxs[i];
+        if (gvm_ctx->vmm_boot_lcm_enable == false) continue;
         ret = pthread_create(&gvm_ctx->loop_thread, &attr, vmm_lcm_event_loop, (void*)gvm_ctx);
         if (ret != 0) {
             vmm_err("Failed to create vmm_lcm_event_loop thread  %d\n", ret);
@@ -581,9 +638,12 @@ exit:
 static int vmm_boot_lcm_init(vmm_boot_lcm_t *vmm_boot_lcm)
 {
     int ret = -1;
-    uint32_t vmid = 52;
+    uint32_t *vmids;
+    uint32_t num_gvm_lcm_enable = 0;
     vmm_subscribe_attr_t  s_attr = {0};
     struct boot_slot_info slot_info;
+    gvm_context_t *gvm_ctx;
+
 
     ret = libabctl_getBootSlot();
     if (ret != 0 && ret != 1) {
@@ -592,12 +652,30 @@ static int vmm_boot_lcm_init(vmm_boot_lcm_t *vmm_boot_lcm)
         goto exit;
     }
     vmm_boot_lcm->host_boot_slot = ret ? 'b' : 'a';
-    vmm_boot_lcm->slot_switch_config = SYMMETRIC_SLOT_SWITCH;
     vmm_info("host boot slot %c\n", vmm_boot_lcm->host_boot_slot);
 
     ret = parse_gvm_info_and_populate_ctx(vmm_boot_lcm);
     if (ret != EOK) {
         vmm_err("Failed to parse gvm info and populate ctx");
+        goto exit;
+    }
+
+    vmids = (uint32_t*)calloc(vmm_boot_lcm->num_gvms, sizeof(uint32_t));
+    if (vmids == NULL) {
+        vmm_err("Failed to acllocate memory for vmids");
+        goto exit;
+    }
+
+    for (int i = 0; i < vmm_boot_lcm->num_gvms; i++) {
+        gvm_ctx = &vmm_boot_lcm->gvm_ctxs[i];
+        if (gvm_ctx->vmm_boot_lcm_enable == true) {
+            vmids[num_gvm_lcm_enable] = gvm_ctx->vmid;
+            num_gvm_lcm_enable++;
+        }
+    }
+
+    if (num_gvm_lcm_enable == 0) {
+        vmm_info("There is no gvm to enable lcm");
         goto exit;
     }
 
@@ -612,11 +690,12 @@ static int vmm_boot_lcm_init(vmm_boot_lcm_t *vmm_boot_lcm)
     s_attr.level = LEVEL_0;
     s_attr.priv_data = (void*)vmm_boot_lcm;
 
-    ret = vmm_subscribe_event_notification(vmm_boot_lcm->vmm_handle, 1, &vmid, &s_attr);
+    ret = vmm_subscribe_event_notification(vmm_boot_lcm->vmm_handle, num_gvm_lcm_enable, vmids, &s_attr);
     if (ret != EOK) {
         vmm_err("Failed to subscribe event notification, Error: %d \n", ret);
         goto exit;
     }
+    free(vmids);
 
     ret = EOK;
 
