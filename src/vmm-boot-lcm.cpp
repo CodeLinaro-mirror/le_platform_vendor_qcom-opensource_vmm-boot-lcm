@@ -432,6 +432,10 @@ static int control_vm(vmm_boot_lcm_t *vmm_boot_lcm, gvm_context_t *gvm_ctx, lcm_
             vmm_err("Failed in gvm boot slot check");
             return ret;
         }
+
+        if (gvm_ctx->slot_switch_config == SYMMETRIC_SLOT_SWITCH && slot_info.target_slot != vmm_boot_lcm->host_boot_slot)
+            set_gvm_taget_slot(gvm_ctx->misc_partition_path, vmm_boot_lcm->host_boot_slot);
+
         switch (slot_info.bootable_status) {
         case 'y':
             //set_bootable_status(gvm_ctx->misc_partition_path, 'n');
