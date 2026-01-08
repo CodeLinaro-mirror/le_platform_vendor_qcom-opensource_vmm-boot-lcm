@@ -1,4 +1,5 @@
-/* Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+/*
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -693,6 +694,7 @@ static int vmm_boot_lcm_init(vmm_boot_lcm_t *vmm_boot_lcm)
     s_attr.event_mask = GVM_SHUTDOWN_LEVEL_0 | GVM_SHUTDOWN_LEVEL_1 | GVM_EVENT_UP | GVM_EVENT_DOWN | GVM_EVENT_FATAL_ERROR;
     s_attr.level = LEVEL_0;
     s_attr.priv_data = (void*)vmm_boot_lcm;
+    s_attr.sync = true;
 
     ret = vmm_subscribe_event_notification(vmm_boot_lcm->vmm_handle, num_gvm_lcm_enable, vmids, &s_attr);
     if (ret != EOK) {
