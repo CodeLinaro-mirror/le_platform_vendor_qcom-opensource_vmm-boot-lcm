@@ -1,4 +1,5 @@
-/* Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+/*
+ * Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
  * SPDX-License-Identifier: BSD-3-Clause-Clear
  */
 
@@ -432,6 +433,10 @@ static int control_vm(vmm_boot_lcm_t *vmm_boot_lcm, gvm_context_t *gvm_ctx, lcm_
             vmm_err("Failed in gvm boot slot check");
             return ret;
         }
+
+        if (gvm_ctx->slot_switch_config == SYMMETRIC_SLOT_SWITCH && slot_info.target_slot != vmm_boot_lcm->host_boot_slot)
+            set_gvm_taget_slot(gvm_ctx->misc_partition_path, vmm_boot_lcm->host_boot_slot);
+
         switch (slot_info.bootable_status) {
         case 'y':
             //set_bootable_status(gvm_ctx->misc_partition_path, 'n');
@@ -689,6 +694,7 @@ static int vmm_boot_lcm_init(vmm_boot_lcm_t *vmm_boot_lcm)
     s_attr.event_mask = GVM_SHUTDOWN_LEVEL_0 | GVM_SHUTDOWN_LEVEL_1 | GVM_EVENT_UP | GVM_EVENT_DOWN | GVM_EVENT_FATAL_ERROR;
     s_attr.level = LEVEL_0;
     s_attr.priv_data = (void*)vmm_boot_lcm;
+    s_attr.sync = true;
 
     ret = vmm_subscribe_event_notification(vmm_boot_lcm->vmm_handle, num_gvm_lcm_enable, vmids, &s_attr);
     if (ret != EOK) {

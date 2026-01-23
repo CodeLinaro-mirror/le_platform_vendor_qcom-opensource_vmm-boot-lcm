@@ -1,11 +1,15 @@
-# Copyright (c) 2025 Qualcomm Innovation Center, Inc. All rights reserved.
+# Copyright (c) Qualcomm Technologies, Inc. and/or its subsidiaries.
 # SPDX-License-Identifier: BSD-3-Clause-Clear
 
 [Unit]
 Description = Gvm Boot Lifecycle Manager
-After = remote-fs.target vmm_drv.service
+After = remote-fs.target vmm_drv.service systemd-udev-trigger.service
+Conflicts = shutdown.target
+Before = shutdown.target
+DefaultDependencies = no
 
 [Service]
+Slice = gvm.slice
 ExecStart = /usr/bin/vmm-boot-lcm
 
 [Install]
