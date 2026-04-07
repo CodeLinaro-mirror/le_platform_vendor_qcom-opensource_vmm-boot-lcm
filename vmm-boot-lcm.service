@@ -3,7 +3,10 @@
 
 [Unit]
 Description = Gvm Boot Lifecycle Manager
-After = remote-fs.target vmm_drv.service
+After = remote-fs.target vmm_drv.service disksymlink.service
+Conflicts = shutdown.target
+Before = shutdown.target
+DefaultDependencies = no
 
 [Service]
 Slice = gvm.slice
