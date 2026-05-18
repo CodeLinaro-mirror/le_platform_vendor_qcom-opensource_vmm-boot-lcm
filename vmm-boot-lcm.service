@@ -3,10 +3,7 @@
 
 [Unit]
 Description = Gvm Boot Lifecycle Manager
-After = remote-fs.target vmm_drv.service systemd-udev-trigger.service
-Conflicts = shutdown.target
-Before = shutdown.target
-DefaultDependencies = no
+After = remote-fs.target vmm_drv.service
 
 [Service]
 Slice = gvm.slice
