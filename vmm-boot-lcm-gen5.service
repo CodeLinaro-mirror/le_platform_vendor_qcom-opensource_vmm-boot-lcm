@@ -3,7 +3,7 @@
 
 [Unit]
 Description = Gvm Boot Lifecycle Manager
-After = remote-fs.target vmm_drv.service disksymlink.service
+After = remote-fs.target vmm_drv.service disksymlink.service vmm-ramdump.service
 Conflicts = shutdown.target
 Before = shutdown.target
 DefaultDependencies = no
