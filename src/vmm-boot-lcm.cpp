@@ -328,7 +328,7 @@ static int check_gvm_boot_slot_info(const char *partition_path, struct boot_slot
         vmm_info("target slot: %c , current slot: %c , bootable_status %c", slot_info->target_slot, slot_info->current_slot, slot_info->bootable_status);
     } else {
         slot_info->target_slot = '\0';
-        vmm_info("target_slot info is not avaiable in la_misc");
+        vmm_info("target_slot info is not avaiable in %s", partition_path);
     }
 
     if (!strncmp(msg->command, "boot-recovery", sizeof("boot-recovery")-1)) {
@@ -344,7 +344,7 @@ static int check_gvm_boot_slot_info(const char *partition_path, struct boot_slot
         }
     } else {
         slot_info->recovery_flag = 0;
-        vmm_info("boot-recovrey command is not present in la_misc");
+        vmm_info("boot-recovrey command is not present in %s", partition_path);
     }
 
     ret = EOK;
